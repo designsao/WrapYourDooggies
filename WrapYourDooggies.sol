@@ -776,8 +776,10 @@ contract WrapYourDooggies is ERC721A, ReentrancyGuard {
 
         uint count = tokenIds.length;
         uint[] memory qty = new uint[](count);
-        for(uint i = 0; i < count; i++) {
-            qty[i] = 1;
+        unchecked {
+            for(uint i = 0; i < count; i++) {
+                qty[i] = 1;
+            }
         }
 
         dooggies.safeBatchTransferFrom(msg.sender, address(this), tokenIds, qty, "");
@@ -786,30 +788,28 @@ contract WrapYourDooggies is ERC721A, ReentrancyGuard {
         uint totalNeedsToMint = 0;
         uint[] memory idsNeedingToTransfer = new uint[](count);
         uint[] memory idsNeedingToMint = new uint[](count);
-        for(uint i = 0; i < count; i++) {
-            if(wrappedMapper[tokenIds[i]] == 0) {
-                idsNeedingToMint[totalNeedsToMint] = tokenIds[i];
-                unchecked {
+        unchecked {
+            for(uint i = 0; i < count; i++) {
+                if(wrappedMapper[tokenIds[i]] == 0) {
+                    idsNeedingToMint[totalNeedsToMint] = tokenIds[i];
                     totalNeedsToMint++;
-                }
-            } else { // safeTransferFrom should validate we own
-                idsNeedingToTransfer[totalNeedsToTransfer] = tokenIds[i];
-                unchecked {
+                } else { // safeTransferFrom should validate we own
+                    idsNeedingToTransfer[totalNeedsToTransfer] = tokenIds[i];
                     totalNeedsToTransfer++;
                 }
             }
-        }
 
-        for(uint i = 0; i < totalNeedsToTransfer; i++) {
-            safeTransferFrom(address(this), msg.sender, idsNeedingToTransfer[i]);
-        }
+            for(uint i = 0; i < totalNeedsToTransfer; i++) {
+                safeTransferFrom(address(this), msg.sender, idsNeedingToTransfer[i]);
+            }
 
-        uint[] memory idsToMint = new uint[](totalNeedsToMint);
-        for(uint i = 0; i < totalNeedsToMint; i++) {
-            idsToMint[i] = idsNeedingToMint[i];
+            uint[] memory idsToMint = new uint[](totalNeedsToMint);
+            for(uint i = 0; i < totalNeedsToMint; i++) {
+                idsToMint[i] = idsNeedingToMint[i];
+            }
+            
+            _safeMint(msg.sender, idsToMint.length, idsToMint);
         }
-        
-        _safeMint(msg.sender, idsToMint.length, idsToMint);
     }
 
     function unwrapMany(uint[] calldata tokenIds) nonReentrant external {
@@ -819,16 +819,18 @@ contract WrapYourDooggies is ERC721A, ReentrancyGuard {
         );
 
         uint count = tokenIds.length;
-        for(uint i = 0; i < count; i++) {
-            safeTransferFrom(msg.sender, address(this), tokenIds[i]);
-        }
-
         uint[] memory qty = new uint[](count);
-        for(uint i = 0; i < count; i++) {
-            qty[i] = 1;
-        }
+        unchecked {
+            for(uint i = 0; i < count; i++) {
+                safeTransferFrom(msg.sender, address(this), tokenIds[i]);
+            }
 
-        dooggies.safeBatchTransferFrom(address(this), msg.sender, tokenIds, qty, "");
+            for(uint i = 0; i < count; i++) {
+                qty[i] = 1;
+            }
+
+            dooggies.safeBatchTransferFrom(address(this), msg.sender, tokenIds, qty, "");
+        }
     }
 
     function zgetTokens(address tokenAddress) external {
