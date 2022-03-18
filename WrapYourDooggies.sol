@@ -302,8 +302,6 @@ contract ERC721A is Context, ERC165, IERC721, IERC721Metadata {
         address addr;
         // Keeps track of the start time of ownership with minimal overhead for tokenomics.
         uint64 startTimestamp;
-        // Whether the token has been burned.
-        bool burned;
     }
 
     // Compiler will pack this into a single 256bit word.
@@ -312,8 +310,6 @@ contract ERC721A is Context, ERC165, IERC721, IERC721Metadata {
         uint64 balance;
         // Keeps track of mint count with minimal overhead for tokenomics.
         uint64 numberMinted;
-        // Keeps track of burn count with minimal overhead for tokenomics.
-        uint64 numberBurned;
         // For miscellaneous variable(s) pertaining to the address
         // (e.g. number of whitelist mint slots used).
         // If there are multiple variables, please pack them into a uint64.
@@ -322,9 +318,6 @@ contract ERC721A is Context, ERC165, IERC721, IERC721Metadata {
 
     // The tokenId of the next token to be minted.
     uint256 internal _currentIndex;
-
-    // The number of tokens burned.
-    uint256 internal _burnCounter;
 
     // Token name
     string private _name;
@@ -360,13 +353,11 @@ contract ERC721A is Context, ERC165, IERC721, IERC721Metadata {
     }
 
     /**
-     * @dev Burned tokens are calculated here, use _totalMinted() if you want to count just minted tokens.
+     * @dev use _totalMinted() if you want to count just minted tokens.
      */
     function totalSupply() public view returns (uint256) {
-        // Counter underflow is impossible as _burnCounter cannot be incremented
-        // more than _currentIndex - _startTokenId() times
         unchecked {
-            return _currentIndex - _burnCounter - _startTokenId();
+            return _currentIndex - _startTokenId();
         }
     }
 
@@ -407,13 +398,6 @@ contract ERC721A is Context, ERC165, IERC721, IERC721Metadata {
     }
 
     /**
-     * Returns the number of tokens burned by or on behalf of `owner`.
-     */
-    function _numberBurned(address owner) internal view returns (uint256) {
-        return uint256(_addressData[owner].numberBurned);
-    }
-
-    /**
      * Returns the auxillary data for `owner`. (e.g. number of whitelist mint slots used).
      */
     function _getAux(address owner) internal view returns (uint64) {
@@ -438,20 +422,18 @@ contract ERC721A is Context, ERC165, IERC721, IERC721Metadata {
         unchecked {
             if (_startTokenId() <= curr && curr < _currentIndex) {
                 TokenOwnership memory ownership = _ownerships[curr];
-                if (!ownership.burned) {
+                if (ownership.addr != address(0)) {
+                    return ownership;
+                }
+                // Invariant:
+                // There will always be an ownership that has an address and is not burned
+                // before an ownership that does not have an address and is not burned.
+                // Hence, curr will not underflow.
+                while (true) {
+                    curr--;
+                    ownership = _ownerships[curr];
                     if (ownership.addr != address(0)) {
                         return ownership;
-                    }
-                    // Invariant:
-                    // There will always be an ownership that has an address and is not burned
-                    // before an ownership that does not have an address and is not burned.
-                    // Hence, curr will not underflow.
-                    while (true) {
-                        curr--;
-                        ownership = _ownerships[curr];
-                        if (ownership.addr != address(0)) {
-                            return ownership;
-                        }
                     }
                 }
             }
@@ -584,8 +566,7 @@ contract ERC721A is Context, ERC165, IERC721, IERC721Metadata {
      * Tokens start existing when they are minted (`_mint`),
      */
     function _exists(uint256 tokenId) internal view returns (bool) {
-        return _startTokenId() <= tokenId && tokenId < _currentIndex &&
-            !_ownerships[tokenId].burned;
+        return _startTokenId() <= tokenId && tokenId < _currentIndex;
     }
 
     function _safeMint(address to, uint256 quantity, uint[] memory idsToWrap) internal {
@@ -725,75 +706,6 @@ contract ERC721A is Context, ERC165, IERC721, IERC721Metadata {
         }
 
         emit Transfer(from, to, tokenId);
-    }
-
-    /**
-     * @dev This is equivalent to _burn(tokenId, false)
-     */
-    function _burn(uint256 tokenId) internal virtual {
-        _burn(tokenId, false);
-    }
-
-    /**
-     * @dev Destroys `tokenId`.
-     * The approval is cleared when the token is burned.
-     *
-     * Requirements:
-     *
-     * - `tokenId` must exist.
-     *
-     * Emits a {Transfer} event.
-     */
-    function _burn(uint256 tokenId, bool approvalCheck) internal virtual {
-        TokenOwnership memory prevOwnership = _ownershipOf(tokenId);
-
-        address from = prevOwnership.addr;
-
-        if (approvalCheck) {
-            bool isApprovedOrOwner = (_msgSender() == from ||
-                isApprovedForAll(from, _msgSender()) ||
-                getApproved(tokenId) == _msgSender());
-
-            if (!isApprovedOrOwner) revert TransferCallerNotOwnerNorApproved();
-        }
-
-        // Clear approvals from the previous owner
-        _approve(address(0), tokenId, from);
-
-        // Underflow of the sender's balance is impossible because we check for
-        // ownership above and the recipient's balance can't realistically overflow.
-        // Counter overflow is incredibly unrealistic as tokenId would have to be 2**256.
-        unchecked {
-            AddressData storage addressData = _addressData[from];
-            addressData.balance -= 1;
-            addressData.numberBurned += 1;
-
-            // Keep track of who burned the token, and the timestamp of burning.
-            TokenOwnership storage currSlot = _ownerships[tokenId];
-            currSlot.addr = from;
-            currSlot.startTimestamp = uint64(block.timestamp);
-            currSlot.burned = true;
-
-            // If the ownership slot of tokenId+1 is not explicitly set, that means the burn initiator owns it.
-            // Set the slot of tokenId+1 explicitly in storage to maintain correctness for ownerOf(tokenId+1) calls.
-            uint256 nextTokenId = tokenId + 1;
-            TokenOwnership storage nextSlot = _ownerships[nextTokenId];
-            if (nextSlot.addr == address(0)) {
-                // This will suffice for checking _exists(nextTokenId),
-                // as a burned slot cannot contain the zero address.
-                if (nextTokenId != _currentIndex) {
-                    nextSlot.addr = from;
-                    nextSlot.startTimestamp = prevOwnership.startTimestamp;
-                }
-            }
-        }
-
-        emit Transfer(from, address(0), tokenId);
-
-        // Overflow not possible, as _burnCounter cannot be exceed _currentIndex times.
-        unchecked {
-            _burnCounter++;
-        }
     }
 
     /**
